@@ -35,7 +35,7 @@ func GetEnv() (Env, error) {
 		env.ApiAuthToken = "DEFAULT_KEY"
 	}
 	if env.URL == "" {
-		env.URL = "localhost:8080"
+		env.URL = "0.0.0.0:8080"
 	}
 
 	log.Printf("Loaded '%s' envfile", fileName)
