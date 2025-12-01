@@ -77,7 +77,7 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func StartBackgroundDBUpdater(sqlClient *adapter.SqliteClient) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(30 * time.Minute)
 
 	go func() {
 		for {
