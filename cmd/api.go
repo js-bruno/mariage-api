@@ -1,23 +1,18 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/js-bruno/mariage-api/internal/adapter"
-	"github.com/js-bruno/mariage-api/internal/repository"
+	"github.com/js-bruno/mariage-api/internal/controller"
 	"github.com/js-bruno/mariage-api/internal/utils"
 	"github.com/mercadopago/sdk-go/pkg/config"
 	"github.com/mercadopago/sdk-go/pkg/payment"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/v2/mongo"
 )
 
 type PaymentRequest struct {
@@ -41,8 +36,15 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
+	client, close := adapter.NewSqliteClient("gift.db")
+	defer close()
+
+	StartBackgroundDBUpdater(client)
+	controller := controller.APIController{Env: EnvConfig, SqlClient: client}
+
 	r := mux.NewRouter()
-	r.HandleFunc("/getPaymentQR", GetPayment).Methods("POST")
+	r.HandleFunc("/getPaymentQR", controller.GetPayment).Methods("POST")
+	r.HandleFunc("/getPaymentDB/{id}", controller.GetPaymentFromDatabase).Methods("POST")
 	r.HandleFunc("/health-check", HealthHandler).Methods("POST")
 	http.Handle("/", r)
 
@@ -66,49 +68,6 @@ func main() {
 	}
 }
 
-func GetPayment(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept")
-
-	// Handle preflight requests (OPTIONS method).
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	authBearer := r.Header.Get("Authorization")
-	authBearer = strings.TrimPrefix(authBearer, "Bearer ")
-
-	if EnvConfig.ApiAuthToken != authBearer {
-		err := errors.New("unauthorized token")
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	var paymentRequest PaymentRequest
-	err := json.NewDecoder(r.Body).Decode(&paymentRequest)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cfg, err := config.New(EnvConfig.AccessTokenMeli)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-
-	client := payment.NewClient(cfg)
-	qrCode, err := adapter.GeneratePIXQRCode(client, paymentRequest.Email, paymentRequest.Value, paymentRequest.ItemDesc)
-
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	}
-
-	json.NewEncoder(w).Encode(&PaymentResponse{
-		QRCode: qrCode,
-	})
-}
-
 func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "aplication/json")
 	w.WriteHeader(http.StatusOK)
@@ -117,19 +76,41 @@ func HealthHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func GetGift(ctx context.Context, client *mongo.Client, giftId any) (repository.Gift, error) {
-	coll := client.Database(repository.DatabaseName).Collection(repository.CollectionName)
-	// mongoID, err := primitive.ObjectIDFromHex("0")
-	// if err != nil {
-	// 	return repository.Gift{}, err
-	// }
+func StartBackgroundDBUpdater(sqlClient *adapter.SqliteClient) {
+	ticker := time.NewTicker(30 * time.Second)
 
-	// filter := bson.D{{"id", 0}}
+	go func() {
+		for {
+			<-ticker.C               // espera 10 minutos
+			UpdateQRcodes(sqlClient) // executa a função de update
+		}
+	}()
+}
 
-	var gift repository.Gift
-	err := coll.FindOne(ctx, bson.M{"_id": giftId}).Decode(&gift)
+func UpdateQRcodes(sqlClient *adapter.SqliteClient) error {
+	log.Println("starting qr update process..")
+	gifts, err := sqlClient.ListGifts()
 	if err != nil {
-		return repository.Gift{}, err
+		return err
 	}
-	return gift, nil
+	cfg, err := config.New(EnvConfig.AccessTokenMeli)
+	if err != nil {
+		return err
+	}
+	for _, gift := range gifts {
+		client := payment.NewClient(cfg)
+		log.Println(gift.Price)
+		qrCode, err := adapter.GeneratePIXQRCode(client, "brunocebrsilva@gmail.com", gift.Price, gift.Name)
+		if err != nil {
+			return err
+		}
+
+		gift.QRCode = qrCode
+		err = sqlClient.UpdateGiftQRCode(gift.ID, gift.QRCode)
+		if err != nil {
+			return err
+		}
+	}
+	log.Printf("Update total of %d gifts successfully", len(gifts))
+	return nil
 }

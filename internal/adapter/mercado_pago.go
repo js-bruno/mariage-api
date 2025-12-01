@@ -2,7 +2,6 @@ package adapter
 
 import (
 	"context"
-	"log"
 
 	"github.com/mercadopago/sdk-go/pkg/payment"
 )
@@ -27,9 +26,6 @@ func GeneratePIXQRCode(
 	if err != nil {
 		return "", err
 	}
-
 	qrCode := resource.PointOfInteraction.TransactionData.QRCode
-	log.Printf("%s:qrcode successfully generated | %s \n", email, qrCode)
-
 	return qrCode, nil
 }
