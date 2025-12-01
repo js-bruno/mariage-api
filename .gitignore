@@ -1,0 +1,4 @@
+.vscode/
+app*
+curl.prd.sh
+.env.prod
