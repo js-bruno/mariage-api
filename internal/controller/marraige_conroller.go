@@ -85,6 +85,7 @@ func (a APIController) GetPaymentFromDatabase(w http.ResponseWriter, r *http.Req
 	err := a.authCheck(authBearer)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
 	}
 	vars := mux.Vars(r)
 	var paymentRequest PaymentRequest
